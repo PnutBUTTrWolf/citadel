@@ -103,7 +103,10 @@ export class CitadelStatusBar {
 			return;
 		}
 
-		const target = vscode.ConfigurationTarget.Workspace;
+		const hasWorkspace = vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders.length > 0;
+		const target = hasWorkspace
+			? vscode.ConfigurationTarget.Workspace
+			: vscode.ConfigurationTarget.Global;
 		await config.update('provider', picked.value, target);
 
 		switch (picked.value) {
