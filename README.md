@@ -25,6 +25,7 @@ Citadel provides a visual interface for Gas Town's multi-agent system directly i
 - [VS Code](https://code.visualstudio.com/) 1.90.0 or later
 - [`gt` CLI](https://github.com/anthropics/gas-town) installed and on your PATH
 - [`bd` CLI](https://github.com/anthropics/beads) installed and on your PATH
+- `tmux` installed and on your PATH (agent sessions run inside tmux)
 - A Gas Town workspace initialized at `~/gt` (or configured via `citadel.workspacePath`)
 
 ## Development

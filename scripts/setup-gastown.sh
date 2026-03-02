@@ -80,6 +80,21 @@ fi
 export PATH="${GOPATH:-$HOME/go}/bin:$PATH"
 
 # ---------------------------------------------------------------------------
+# 1b. tmux (terminal multiplexer, required for agent sessions)
+# ---------------------------------------------------------------------------
+if command -v tmux &>/dev/null; then
+    ok "tmux $(tmux -V 2>/dev/null || echo '(installed)')"
+else
+    info "Installing tmux..."
+    if [[ "$PLATFORM" == "macos" ]]; then
+        brew install tmux
+    else
+        sudo apt-get update -qq && sudo apt-get install -y -qq tmux
+    fi
+    ok "tmux installed"
+fi
+
+# ---------------------------------------------------------------------------
 # 2. gt (Gastown CLI)
 # ---------------------------------------------------------------------------
 # Note: We clone and build locally instead of using 'go install ...@latest'
