@@ -62,6 +62,12 @@
           "contextualTitle": "Citadel Mayor"
         },
         {
+          "id": "citadel.escalations",
+          "name": "Escalations",
+          "icon": "$(megaphone)",
+          "contextualTitle": "Citadel Escalations"
+        },
+        {
           "id": "citadel.rigs",
           "name": "Rigs & Hooks",
           "icon": "$(repo)",
@@ -381,6 +387,24 @@
         "icon": "$(clear-all)"
       },
       {
+        "command": "citadel.refreshEscalations",
+        "title": "Refresh Escalations",
+        "category": "Citadel",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "citadel.resolveEscalation",
+        "title": "Resolve Escalation",
+        "category": "Citadel",
+        "icon": "$(check)"
+      },
+      {
+        "command": "citadel.openEscalationTerminal",
+        "title": "Open Escalation Agent Terminal",
+        "category": "Citadel",
+        "icon": "$(terminal)"
+      },
+      {
         "command": "citadel.refreshActivity",
         "title": "Refresh Activity",
         "category": "Citadel",
@@ -491,6 +515,11 @@
           "group": "navigation"
         },
         {
+          "command": "citadel.refreshEscalations",
+          "when": "view == citadel.escalations",
+          "group": "navigation"
+        },
+        {
           "command": "citadel.refreshHealth",
           "when": "view == citadel.health",
           "group": "navigation"
@@ -581,6 +610,21 @@
           "command": "citadel.rejectMergeRequest",
           "when": "view == citadel.queue && viewItem =~ /^queueItem/",
           "group": "context"
+        },
+        {
+          "command": "citadel.resolveEscalation",
+          "when": "view == citadel.escalations && viewItem == escalation",
+          "group": "inline"
+        },
+        {
+          "command": "citadel.openEscalationTerminal",
+          "when": "view == citadel.escalations && viewItem == escalationWithAgent",
+          "group": "inline@1"
+        },
+        {
+          "command": "citadel.resolveEscalation",
+          "when": "view == citadel.escalations && viewItem == escalationWithAgent",
+          "group": "inline@2"
         },
         {
           "command": "citadel.healthRestart",
@@ -687,6 +731,18 @@
         {
           "command": "citadel.statusBarClick",
           "when": "true"
+        },
+        {
+          "command": "citadel.refreshEscalations",
+          "when": "true"
+        },
+        {
+          "command": "citadel.resolveEscalation",
+          "when": "true"
+        },
+        {
+          "command": "citadel.openEscalationTerminal",
+          "when": "false"
         },
         {
           "command": "citadel.refreshActivity",

@@ -1549,4 +1549,20 @@ export class GtClient {
 		return this.exec(['refinery', 'restart']);
 	}
 
+	// ---- Escalations ----------------------------------------------------------
+
+	async getEscalations(): Promise<import('./cli/contracts').GtEscalation[]> {
+		try {
+			const output = await this.cachedExec(['escalations', 'list', '--json']);
+			const data = JSON.parse(output);
+			return Array.isArray(data) ? data : [];
+		} catch {
+			return [];
+		}
+	}
+
+	async resolveEscalation(id: string, decision: string): Promise<string> {
+		return this.exec(['escalations', 'resolve', id, '--decision', decision]);
+	}
+
 }

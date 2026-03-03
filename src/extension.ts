@@ -23,6 +23,8 @@ import { createBead, showBeadDetails, deleteBead } from './commands/bead';
 import { createConvoy, showConvoyDetails } from './commands/convoy';
 import { detachMayor } from './commands/mayor';
 import { showMailMessage, composeMail } from './commands/mail';
+import { EscalationsTreeProvider } from './views/escalationsView';
+import { resolveEscalation } from './commands/escalation';
 
 export function activate(context: vscode.ExtensionContext): void {
 	console.log('[Citadel] Extension activating in extension host (pid ' + process.pid + ')');
@@ -42,6 +44,7 @@ export function activate(context: vscode.ExtensionContext): void {
 	const queueProvider = new QueueTreeProvider(client);
 	const healthProvider = new HealthTreeProvider(client);
 	const activityProvider = new ActivityTreeProvider(client);
+	const escalationsProvider = new EscalationsTreeProvider(client);
 
 	// Summary: at-a-glance stats and alerts
 	const summaryTreeView = vscode.window.createTreeView('citadel.summary', {
@@ -93,6 +96,9 @@ export function activate(context: vscode.ExtensionContext): void {
 	});
 	const activityTreeView = vscode.window.createTreeView('citadel.activity', {
 		treeDataProvider: activityProvider,
+	});
+	const escalationsTreeView = vscode.window.createTreeView('citadel.escalations', {
+		treeDataProvider: escalationsProvider,
 	});
 
 	// --- Commands: existing ---
@@ -518,6 +524,19 @@ export function activate(context: vscode.ExtensionContext): void {
 		vscode.commands.registerCommand('citadel.refreshMayor', () => mayorProvider.refreshFromCli()),
 		vscode.commands.registerCommand('citadel.refreshActivity', () => activityProvider.refresh()),
 		vscode.commands.registerCommand('citadel.filterActivity', () => activityProvider.cycleFilter()),
+		vscode.commands.registerCommand('citadel.refreshEscalations', () => escalationsProvider.refresh()),
+		vscode.commands.registerCommand('citadel.resolveEscalation', async (escalation?: import('./cli/contracts').GtEscalation) => {
+			await resolveEscalation(client, escalation);
+			escalationsProvider.refresh();
+		}),
+		vscode.commands.registerCommand('citadel.openEscalationTerminal', async (escalation?: import('./cli/contracts').GtEscalation) => {
+			if (!escalation?.agent) { return; }
+			const agents = await client.getAgents();
+			const agent = agents.find(a => a.name === escalation.agent);
+			if (agent) {
+				terminalManager.openAgentTerminal(agent);
+			}
+		}),
 		vscode.commands.registerCommand('citadel.refreshHealth', () => healthProvider.refresh()),
 		vscode.commands.registerCommand('citadel.healthRestart', async (item: import('./views/healthView').HealthTierItem) => {
 			if (!item?.tier) { return; }
@@ -623,6 +642,7 @@ export function activate(context: vscode.ExtensionContext): void {
 			if (mayorTreeView.visible) { mayorProvider.refreshFromCli(); }
 			if (queueTreeView.visible) { queueProvider.refresh(); }
 			if (activityTreeView.visible) { activityProvider.refresh(); }
+			if (escalationsTreeView.visible) { escalationsProvider.refresh(); }
 		}
 
 		// Slowest tier: health refreshes every 3rd tick (~15s)
@@ -643,6 +663,7 @@ export function activate(context: vscode.ExtensionContext): void {
 			queueTreeView.dispose();
 			healthTreeView.dispose();
 			activityTreeView.dispose();
+			escalationsTreeView.dispose();
 			statusBar.dispose();
 			terminalManager.dispose();
 			healthProvider.dispose();

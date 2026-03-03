@@ -180,6 +180,27 @@ export interface ActivityEvent {
 }
 
 // ---------------------------------------------------------------------------
+// Escalations
+// ---------------------------------------------------------------------------
+
+export type EscalationType = 'decision' | 'conflict' | 'failure';
+export type EscalationSeverity = 'low' | 'medium' | 'high' | 'critical';
+
+export interface GtEscalation {
+	id: string;
+	type: EscalationType;
+	severity: EscalationSeverity;
+	title: string;
+	description: string;
+	agent?: string;
+	rig?: string;
+	bead_id?: string;
+	created_at: string;
+	resolved: boolean;
+	resolution?: string;
+}
+
+// ---------------------------------------------------------------------------
 // Health / Watchdog
 // ---------------------------------------------------------------------------
 
