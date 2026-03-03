@@ -99,7 +99,8 @@ fi
 # ---------------------------------------------------------------------------
 # Note: We clone and build locally instead of using 'go install ...@latest'
 # because the gastown go.mod contains replace directives, which Go disallows
-# for remote module installs.
+# for remote module installs.  We use 'make build' so that ldflags (Version,
+# Commit, BuiltProperly) are set and the binary is code-signed on macOS.
 if command -v gt &>/dev/null; then
     ok "gt $(gt version 2>/dev/null || echo '(installed)')"
 else
@@ -107,7 +108,7 @@ else
     GT_TMPDIR="$(mktemp -d)"
     trap 'rm -rf "$GT_TMPDIR"' EXIT
     git clone --depth 1 https://github.com/steveyegge/gastown.git "$GT_TMPDIR/gastown"
-    (cd "$GT_TMPDIR/gastown" && go build -o "${GOPATH:-$HOME/go}/bin/gt" ./cmd/gt)
+    (cd "$GT_TMPDIR/gastown" && make build SKIP_UPDATE_CHECK=1 && cp gt "${GOPATH:-$HOME/go}/bin/gt")
     rm -rf "$GT_TMPDIR"
     trap - EXIT
     ok "gt installed"
@@ -178,10 +179,11 @@ else
     info "Installing bd CLI..."
     # Clone and build locally — same reason as gt: beads go.mod may contain
     # replace directives that prevent 'go install ...@latest'.
+    # Use 'make build' so ldflags (Build hash) are set and binary is code-signed on macOS.
     BD_TMPDIR="$(mktemp -d)"
     trap 'rm -rf "$BD_TMPDIR"' EXIT
     git clone --depth 1 https://github.com/steveyegge/beads.git "$BD_TMPDIR/beads"
-    (cd "$BD_TMPDIR/beads" && go build -o "${GOPATH:-$HOME/go}/bin/bd" ./cmd/bd)
+    (cd "$BD_TMPDIR/beads" && make build && cp bd "${GOPATH:-$HOME/go}/bin/bd")
     rm -rf "$BD_TMPDIR"
     trap - EXIT
     ok "bd installed"
