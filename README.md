@@ -20,6 +20,44 @@ Citadel provides a visual interface for Gas Town's multi-agent system directly i
 - **Status Bar** — Live agent count and system status at a glance
 - **Claude Provider Config** — Configure Anthropic API, Vertex AI, or Bedrock as the Claude provider for all agents
 
+## Screenshots
+
+### Sidebar Overview
+
+![Sidebar Overview](docs/images/sidebar-overview.png)
+
+*The Citadel sidebar showing agents, beads, mail, and system status at a glance.*
+
+### Work Tab
+
+![Work Tab](docs/images/work-tab.png)
+
+*The Work tab displaying active assignments, molecule progress, and hook status.*
+
+### Battlestation
+
+![Battlestation](docs/images/battlestation.png)
+
+*Terminal grid view showing all active agent sessions simultaneously.*
+
+### Beads Detail View
+
+![Beads Detail View](docs/images/beads-detail-view.png)
+
+*Issue tracking interface for browsing, filtering, and managing beads.*
+
+### System Health Panel
+
+![System Health Panel](docs/images/system-health-panel.png)
+
+*Health monitoring dashboard showing agent status, watchdog, and system metrics.*
+
+### Claude Provider Config
+
+![Claude Provider Config](docs/images/claude-provider-config.png)
+
+*Configuration panel for selecting and configuring the Claude API provider.*
+
 ## Prerequisites
 
 - [VS Code](https://code.visualstudio.com/) 1.90.0 or later
