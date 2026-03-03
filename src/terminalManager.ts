@@ -4,6 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import * as vscode from 'vscode';
+import { execFile } from 'child_process';
 import { GtClient, GtAgent, DaemonIssue } from './gtClient';
 import { RIG_COLORS, INFRASTRUCTURE_ROLES, type AgentDisplayStatus } from './constants';
 
@@ -424,6 +425,38 @@ export class TerminalManager {
 				running: state.agent.running,
 			}))
 			.sort((a, b) => a.slot - b.slot);
+	}
+
+	/**
+	 * Capture tmux pane content for all agent terminals with active sessions.
+	 * Returns a map of agentName -> terminal output text.
+	 */
+	async captureTmuxOutputs(lines = 200): Promise<Map<string, string>> {
+		const outputs = new Map<string, string>();
+		const entries = Array.from(this.terminalStates.entries())
+			.filter(([_, state]) => state.agent.session);
+
+		const captures = entries.map(async ([name, state]) => {
+			try {
+				const result = await new Promise<string>((resolve, reject) => {
+					execFile('tmux', [
+						'capture-pane', '-p', '-S', `-${lines}`, '-t', state.agent.session!,
+					], { encoding: 'utf-8', timeout: 5000 }, (err: Error | null, stdout: string) => {
+						if (err) {
+							reject(err);
+						} else {
+							resolve(stdout);
+						}
+					});
+				});
+				outputs.set(name, result);
+			} catch {
+				// Session may not exist or tmux not running
+			}
+		});
+
+		await Promise.allSettled(captures);
+		return outputs;
 	}
 
 	/**

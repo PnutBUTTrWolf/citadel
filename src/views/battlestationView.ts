@@ -27,6 +27,7 @@ export interface BattlestationPaneInfo {
 	beadId?: string;
 	running: boolean;
 	convoy?: ConvoyProgressInfo;
+	terminalOutput?: string;
 }
 
 export class BattlestationPanel {
@@ -64,6 +65,8 @@ export class BattlestationPanel {
 			.get<number>('battlestation.refreshInterval', 3000);
 		this.refreshTimer = setInterval(() => this.refresh(), interval);
 
+		// Set the skeleton HTML once, then use postMessage for updates
+		this.panel.webview.html = this.getSkeletonHtml();
 		this.refresh();
 	}
 
@@ -97,23 +100,58 @@ export class BattlestationPanel {
 	}
 
 	refresh(): void {
-		let panes = this.terminalManager.getBattlestationState();
+		const allPanes = this.terminalManager.getBattlestationState();
+		let panes = allPanes;
 		if (this.activeFilter) {
 			const { type, value } = this.activeFilter;
 			panes = panes.filter(p =>
 				type === 'rig' ? p.rig === value : p.role === value,
 			);
 		}
-		// Enrich with convoy progress data asynchronously
-		this.terminalManager.getConvoyProgressMap().then(convoyMap => {
+
+		// Collect filter options from all panes (unfiltered)
+		const rigs = [...new Set(allPanes.map(p => p.rig).filter(Boolean))].sort();
+		const roles = [...new Set(allPanes.map(p => p.role).filter(Boolean))].sort();
+		const hasCompleted = allPanes.some(p =>
+			p.status === 'completing' || p.status === 'exited' || p.status === 'dead',
+		);
+
+		// Enrich with convoy progress and terminal output asynchronously
+		Promise.all([
+			this.terminalManager.getConvoyProgressMap().catch(() => new Map()),
+			this.terminalManager.captureTmuxOutputs().catch(() => new Map()),
+		]).then(([convoyMap, outputMap]) => {
 			for (const pane of panes) {
 				if (pane.beadId && convoyMap.has(pane.beadId)) {
 					pane.convoy = convoyMap.get(pane.beadId);
 				}
+				if (outputMap.has(pane.agentName)) {
+					pane.terminalOutput = outputMap.get(pane.agentName);
+				}
 			}
-			this.panel.webview.html = this.getHtml(panes);
-		}).catch(() => {
-			this.panel.webview.html = this.getHtml(panes);
+			this.panel.webview.postMessage({
+				command: 'updatePanes',
+				panes: panes.map(p => ({
+					agentName: p.agentName,
+					label: p.label,
+					group: p.group,
+					slot: p.slot,
+					status: p.status,
+					focused: p.focused,
+					role: p.role,
+					rig: p.rig,
+					beadId: p.beadId,
+					running: p.running,
+					convoy: p.convoy,
+					terminalOutput: p.terminalOutput,
+				})),
+				paneCount: panes.length,
+				hasFilter: !!this.activeFilter,
+				rigs,
+				roles,
+				hasCompleted,
+				activeFilter: this.activeFilter,
+			});
 		});
 	}
 
@@ -186,37 +224,7 @@ export class BattlestationPanel {
 		this.refresh();
 	}
 
-	private getHtml(panes: BattlestationPaneInfo[]): string {
-		const allPanes = this.terminalManager.getBattlestationState();
-		const paneCount = panes.length;
-		// Auto-compute grid dimensions
-		let cols: number;
-		if (paneCount <= 1) {
-			cols = 1;
-		} else if (paneCount <= 4) {
-			cols = 2;
-		} else if (paneCount <= 6) {
-			cols = 3;
-		} else {
-			cols = Math.min(4, Math.ceil(Math.sqrt(paneCount)));
-		}
-
-		const paneCards = panes.map(p => this.renderPaneCard(p)).join('\n');
-
-		// Collect unique rigs and roles for filter dropdowns
-		const rigs = [...new Set(allPanes.map(p => p.rig).filter(Boolean))].sort();
-		const roles = [...new Set(allPanes.map(p => p.role).filter(Boolean))].sort();
-		const hasCompleted = allPanes.some(p =>
-			p.status === 'completing' || p.status === 'exited' || p.status === 'dead',
-		);
-
-		const rigOptions = rigs.map(r =>
-			`<option value="${this.escapeHtml(r)}"${this.activeFilter?.type === 'rig' && this.activeFilter.value === r ? ' selected' : ''}>${this.escapeHtml(r)}</option>`,
-		).join('');
-		const roleOptions = roles.map(r =>
-			`<option value="${this.escapeHtml(r)}"${this.activeFilter?.type === 'role' && this.activeFilter.value === r ? ' selected' : ''}>${this.escapeHtml(r)}</option>`,
-		).join('');
-
+	private getSkeletonHtml(): string {
 		return /* html */ `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -224,7 +232,7 @@ export class BattlestationPanel {
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <style>
 	:root {
-		--grid-cols: ${cols};
+		--grid-cols: 1;
 	}
 	* { margin: 0; padding: 0; box-sizing: border-box; }
 	body {
@@ -413,16 +421,53 @@ export class BattlestationPanel {
 	.pane-body {
 		flex: 1;
 		display: flex;
+		flex-direction: column;
+		overflow: hidden;
+		position: relative;
+	}
+	.pane-terminal {
+		flex: 1;
+		overflow-y: auto;
+		overflow-x: hidden;
+		padding: 6px 8px;
+		font-family: var(--vscode-editor-font-family, 'Menlo', 'Monaco', 'Courier New', monospace);
+		font-size: 11px;
+		line-height: 1.4;
+		white-space: pre-wrap;
+		word-break: break-all;
+		color: var(--vscode-terminal-foreground, var(--vscode-foreground));
+		background: var(--vscode-terminal-background, rgba(0,0,0,0.2));
+	}
+	.pane-terminal::-webkit-scrollbar {
+		width: 10px;
+	}
+	.pane-terminal::-webkit-scrollbar-track {
+		background: transparent;
+	}
+	.pane-terminal::-webkit-scrollbar-thumb {
+		background: var(--vscode-scrollbarSlider-background, rgba(121,121,121,0.4));
+		border-radius: 5px;
+		border: 2px solid transparent;
+		background-clip: content-box;
+	}
+	.pane-terminal::-webkit-scrollbar-thumb:hover {
+		background: var(--vscode-scrollbarSlider-hoverBackground, rgba(100,100,100,0.7));
+		background-clip: content-box;
+	}
+	.pane-terminal::-webkit-scrollbar-thumb:active {
+		background: var(--vscode-scrollbarSlider-activeBackground, rgba(191,191,191,0.4));
+		background-clip: content-box;
+	}
+	.pane-terminal-empty {
+		flex: 1;
+		display: flex;
 		align-items: center;
 		justify-content: center;
-		padding: 16px;
 		color: var(--vscode-descriptionForeground);
 		font-size: 11px;
-	}
-	.pane-body .terminal-hint {
+		opacity: 0.7;
 		text-align: center;
 		line-height: 1.5;
-		opacity: 0.7;
 	}
 	.pane-actions {
 		display: flex;
@@ -554,155 +599,42 @@ export class BattlestationPanel {
 <body>
 	<div class="header">
 		<h1>Battlestation</h1>
-		<span class="stats">${paneCount} terminal${paneCount !== 1 ? 's' : ''}${this.activeFilter ? ` (filtered)` : ''}</span>
+		<span class="stats" id="stats-label">0 terminals</span>
 	</div>
 	<div class="quick-bar">
 		<label>Filter:</label>
 		<select id="filter-rig">
 			<option value="">All rigs</option>
-			${rigOptions}
 		</select>
 		<select id="filter-role">
 			<option value="">All roles</option>
-			${roleOptions}
 		</select>
 		<div class="separator"></div>
-		<button id="btn-clear-completed"${hasCompleted ? '' : ' disabled'}>Clear completed</button>
+		<button id="btn-clear-completed" disabled>Clear completed</button>
 	</div>
-	${paneCount === 0
-			? `<div class="empty-state">
-				<div class="icon">&#x25A3;</div>
-				<p>${this.activeFilter
-					? 'No terminals match the current filter.'
-					: 'No agent terminals open.<br>Click an agent in the sidebar or sling a bead to populate the grid.'}</p>
-			</div>`
-			: `<div class="grid">${paneCards}</div>`}
+	<div id="content-area">
+		<div class="empty-state">
+			<div class="icon">&#x25A3;</div>
+			<p>No agent terminals open.<br>Click an agent in the sidebar or sling a bead to populate the grid.</p>
+		</div>
+	</div>
 	<div class="ctx-menu" id="context-menu"></div>
 	<script>
 		const vscode = acquireVsCodeApi();
 
-		// --- Quick bar ---
-		document.getElementById('filter-rig').addEventListener('change', (e) => {
-			const val = e.target.value;
-			// Clear role filter when rig is set
-			document.getElementById('filter-role').value = '';
-			vscode.postMessage({
-				command: 'setFilter',
-				filterType: val ? 'rig' : undefined,
-				filterValue: val || undefined,
-			});
-		});
-		document.getElementById('filter-role').addEventListener('change', (e) => {
-			const val = e.target.value;
-			// Clear rig filter when role is set
-			document.getElementById('filter-rig').value = '';
-			vscode.postMessage({
-				command: 'setFilter',
-				filterType: val ? 'role' : undefined,
-				filterValue: val || undefined,
-			});
-		});
-		document.getElementById('btn-clear-completed').addEventListener('click', () => {
-			vscode.postMessage({ command: 'clearCompleted' });
-		});
+		// Track which panes the user has manually scrolled (not at bottom)
+		const userScrolled = {};
 
-		// --- Pane click ---
-		document.querySelectorAll('.pane[data-agent]').forEach(el => {
-			el.addEventListener('click', (e) => {
-				if (e.target.closest('.pane-actions button')) return;
-				vscode.postMessage({
-					command: 'focusPane',
-					agentName: el.dataset.agent,
-				});
-			});
-		});
-
-		// --- Header button clicks ---
-		document.querySelectorAll('.btn-close').forEach(el => {
-			el.addEventListener('click', () => {
-				vscode.postMessage({ command: 'closePane', agentName: el.dataset.agent });
-			});
-		});
-		document.querySelectorAll('.btn-reconnect').forEach(el => {
-			el.addEventListener('click', () => {
-				vscode.postMessage({ command: 'reconnectPane', agentName: el.dataset.agent });
-			});
-		});
-		document.querySelectorAll('.btn-reveal').forEach(el => {
-			el.addEventListener('click', () => {
-				vscode.postMessage({ command: 'revealAgent', agentName: el.dataset.agent });
-			});
-		});
-
-		// --- Context menu ---
-		const ctxMenu = document.getElementById('context-menu');
-		let ctxTarget = null;
-
-		function hideCtxMenu() {
-			ctxMenu.classList.remove('visible');
-			ctxTarget = null;
+		function escapeHtml(text) {
+			const el = document.createElement('span');
+			el.textContent = text;
+			return el.innerHTML;
 		}
 
-		document.addEventListener('click', hideCtxMenu);
-		document.addEventListener('keydown', (e) => { if (e.key === 'Escape') hideCtxMenu(); });
-
-		document.querySelectorAll('.pane[data-agent]').forEach(el => {
-			el.addEventListener('contextmenu', (e) => {
-				e.preventDefault();
-				ctxTarget = el;
-				const agent = el.dataset.agent;
-				const role = el.dataset.role || '';
-				const rig = el.dataset.rig || '';
-				const beadId = el.dataset.bead || '';
-				const running = el.dataset.running === 'true';
-				const status = el.dataset.status || '';
-
-				const items = [];
-				// Agent status
-				items.push({ icon: '&#x25CF;', label: statusText(status), disabled: true, cls: 'status-' + status });
-				items.push({ separator: true });
-				// View bead
-				items.push({ icon: '&#x1F4CB;', label: 'View Bead', action: 'viewBead', disabled: !beadId, data: { beadId } });
-				// Reveal in sidebar
-				items.push({ icon: '&#x1F50D;', label: 'Reveal in Sidebar', action: 'revealAgent', data: { agentName: agent } });
-				items.push({ separator: true });
-				// Reconnect
-				items.push({ icon: '&#x21BB;', label: 'Reconnect', action: 'reconnectPane', data: { agentName: agent } });
-				// Restart
-				items.push({ icon: '&#x27F3;', label: 'Restart', action: 'restartAgent', disabled: !running, data: { agentName: agent, role, rig } });
-				items.push({ separator: true });
-				// Kill
-				items.push({ icon: '&#x2715;', label: 'Kill Agent', action: 'killAgent', data: { agentName: agent, role, rig } });
-
-				ctxMenu.innerHTML = items.map(item => {
-					if (item.separator) return '<div class="ctx-menu-separator"></div>';
-					const cls = ['ctx-menu-item'];
-					if (item.disabled) cls.push('disabled');
-					return '<div class="' + cls.join(' ') + '"'
-						+ (item.action && !item.disabled ? ' data-action="' + item.action + '"' : '')
-						+ (item.data ? " data-payload='" + JSON.stringify(item.data).replace(/'/g, '&#39;') + "'" : '')
-						+ '><span class="icon">' + item.icon + '</span>' + item.label + '</div>';
-				}).join('');
-
-				// Position
-				const x = Math.min(e.clientX, window.innerWidth - 180);
-				const y = Math.min(e.clientY, window.innerHeight - (items.length * 30));
-				ctxMenu.style.left = x + 'px';
-				ctxMenu.style.top = y + 'px';
-				ctxMenu.classList.add('visible');
-
-				// Bind actions
-				ctxMenu.querySelectorAll('.ctx-menu-item[data-action]').forEach(mi => {
-					mi.addEventListener('click', (ev) => {
-						ev.stopPropagation();
-						const action = mi.dataset.action;
-						const payload = mi.dataset.payload ? JSON.parse(mi.dataset.payload) : {};
-						vscode.postMessage({ command: action, ...payload });
-						hideCtxMenu();
-					});
-				});
-			});
-		});
+		function stripAnsi(text) {
+			// eslint-disable-next-line no-control-regex
+			return text.replace(/\\x1b\\[[0-9;]*[a-zA-Z]/g, '').replace(/\x1b\\[[0-9;]*[a-zA-Z]/g, '');
+		}
 
 		function statusText(s) {
 			switch(s) {
@@ -715,80 +647,342 @@ export class BattlestationPanel {
 				default: return s;
 			}
 		}
+
+		function computeCols(count) {
+			if (count <= 1) return 1;
+			if (count <= 4) return 2;
+			if (count <= 6) return 3;
+			return Math.min(4, Math.ceil(Math.sqrt(count)));
+		}
+
+		function buildPaneHtml(p) {
+			const focusedClass = p.focused ? ' focused' : '';
+			const stateClass = ' state-' + p.status;
+			const beadBadge = p.beadId
+				? '<div class="bead-badge" title="' + escapeHtml(p.beadId) + '">' + escapeHtml(p.beadId) + '</div>'
+				: '';
+			const groupBadge = p.group
+				? '<div class="pane-group">' + escapeHtml(p.group) + '</div>'
+				: '';
+
+			let bodyContent;
+			if (p.terminalOutput) {
+				bodyContent = '<div class="pane-terminal" data-terminal="' + escapeHtml(p.agentName) + '">'
+					+ escapeHtml(stripAnsi(p.terminalOutput))
+					+ '</div>';
+			} else {
+				bodyContent = '<div class="pane-terminal-empty">'
+					+ '<span class="status-label ' + p.status + '">' + statusText(p.status) + '</span><br>'
+					+ 'Click to focus terminal'
+					+ '</div>';
+			}
+
+			let convoyHtml = '';
+			if (p.convoy) {
+				const pct = p.convoy.total > 0
+					? Math.round((p.convoy.completed / p.convoy.total) * 100)
+					: 0;
+				convoyHtml = '<div class="convoy-label">'
+					+ '<span class="progress-text">' + p.convoy.completed + '/' + p.convoy.total + '</span>'
+					+ escapeHtml(p.convoy.convoyTitle)
+					+ '</div>'
+					+ '<div class="convoy-progress">'
+					+ '<div class="convoy-progress-bar" style="width: ' + pct + '%"></div>'
+					+ '</div>';
+			}
+
+			return '<div class="pane' + focusedClass + stateClass + '"'
+				+ ' data-agent="' + escapeHtml(p.agentName) + '"'
+				+ ' data-role="' + escapeHtml(p.role) + '"'
+				+ ' data-rig="' + escapeHtml(p.rig) + '"'
+				+ ' data-bead="' + escapeHtml(p.beadId || '') + '"'
+				+ ' data-running="' + p.running + '"'
+				+ ' data-status="' + p.status + '">'
+				+ '<div class="pane-header">'
+				+ '<div class="pane-header-left">'
+				+ '<div class="pane-slot">' + (p.slot + 1) + '</div>'
+				+ '<div class="pane-status ' + p.status + '"></div>'
+				+ '<div class="pane-name" title="' + escapeHtml(p.label) + '">' + escapeHtml(p.label) + '</div>'
+				+ beadBadge
+				+ '</div>'
+				+ groupBadge
+				+ '<div class="pane-actions">'
+				+ '<button class="btn-reveal" data-agent="' + escapeHtml(p.agentName) + '" title="Reveal in sidebar">&#x1F50D;</button>'
+				+ '<button class="btn-reconnect" data-agent="' + escapeHtml(p.agentName) + '" title="Reconnect">&#x21BB;</button>'
+				+ '<button class="btn-close" data-agent="' + escapeHtml(p.agentName) + '" title="Close">&#x2715;</button>'
+				+ '</div>'
+				+ '</div>'
+				+ '<div class="pane-body">' + bodyContent + '</div>'
+				+ convoyHtml
+				+ '</div>';
+		}
+
+		function bindPaneEvents() {
+			// Pane click to focus terminal
+			document.querySelectorAll('.pane[data-agent]').forEach(el => {
+				el.addEventListener('click', (e) => {
+					if (e.target.closest('.pane-actions button')) return;
+					if (e.target.closest('.pane-terminal')) return; // Don't focus on terminal scroll
+					vscode.postMessage({ command: 'focusPane', agentName: el.dataset.agent });
+				});
+			});
+
+			// Double-click on terminal area to focus
+			document.querySelectorAll('.pane-terminal').forEach(el => {
+				el.addEventListener('dblclick', () => {
+					const pane = el.closest('.pane[data-agent]');
+					if (pane) {
+						vscode.postMessage({ command: 'focusPane', agentName: pane.dataset.agent });
+					}
+				});
+			});
+
+			// Action buttons
+			document.querySelectorAll('.btn-close').forEach(el => {
+				el.addEventListener('click', () => {
+					vscode.postMessage({ command: 'closePane', agentName: el.dataset.agent });
+				});
+			});
+			document.querySelectorAll('.btn-reconnect').forEach(el => {
+				el.addEventListener('click', () => {
+					vscode.postMessage({ command: 'reconnectPane', agentName: el.dataset.agent });
+				});
+			});
+			document.querySelectorAll('.btn-reveal').forEach(el => {
+				el.addEventListener('click', () => {
+					vscode.postMessage({ command: 'revealAgent', agentName: el.dataset.agent });
+				});
+			});
+
+			// Track manual scrolling on terminal areas
+			document.querySelectorAll('.pane-terminal').forEach(el => {
+				el.addEventListener('scroll', () => {
+					const agent = el.dataset.terminal;
+					const isAtBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 20;
+					userScrolled[agent] = !isAtBottom;
+				});
+			});
+
+			// Context menu
+			document.querySelectorAll('.pane[data-agent]').forEach(el => {
+				el.addEventListener('contextmenu', (e) => {
+					e.preventDefault();
+					const agent = el.dataset.agent;
+					const role = el.dataset.role || '';
+					const rig = el.dataset.rig || '';
+					const beadId = el.dataset.bead || '';
+					const running = el.dataset.running === 'true';
+					const status = el.dataset.status || '';
+
+					const items = [];
+					items.push({ icon: '&#x25CF;', label: statusText(status), disabled: true });
+					items.push({ separator: true });
+					items.push({ icon: '&#x1F4CB;', label: 'View Bead', action: 'viewBead', disabled: !beadId, data: { beadId } });
+					items.push({ icon: '&#x1F50D;', label: 'Reveal in Sidebar', action: 'revealAgent', data: { agentName: agent } });
+					items.push({ separator: true });
+					items.push({ icon: '&#x21BB;', label: 'Reconnect', action: 'reconnectPane', data: { agentName: agent } });
+					items.push({ icon: '&#x27F3;', label: 'Restart', action: 'restartAgent', disabled: !running, data: { agentName: agent, role, rig } });
+					items.push({ separator: true });
+					items.push({ icon: '&#x2715;', label: 'Kill Agent', action: 'killAgent', data: { agentName: agent, role, rig } });
+
+					const ctxMenu = document.getElementById('context-menu');
+					ctxMenu.innerHTML = items.map(item => {
+						if (item.separator) return '<div class="ctx-menu-separator"></div>';
+						const cls = ['ctx-menu-item'];
+						if (item.disabled) cls.push('disabled');
+						return '<div class="' + cls.join(' ') + '"'
+							+ (item.action && !item.disabled ? ' data-action="' + item.action + '"' : '')
+							+ (item.data ? " data-payload='" + JSON.stringify(item.data).replace(/'/g, '&#39;') + "'" : '')
+							+ '><span class="icon">' + item.icon + '</span>' + item.label + '</div>';
+					}).join('');
+
+					const x = Math.min(e.clientX, window.innerWidth - 180);
+					const y = Math.min(e.clientY, window.innerHeight - (items.length * 30));
+					ctxMenu.style.left = x + 'px';
+					ctxMenu.style.top = y + 'px';
+					ctxMenu.classList.add('visible');
+
+					ctxMenu.querySelectorAll('.ctx-menu-item[data-action]').forEach(mi => {
+						mi.addEventListener('click', (ev) => {
+							ev.stopPropagation();
+							const payload = mi.dataset.payload ? JSON.parse(mi.dataset.payload) : {};
+							vscode.postMessage({ command: mi.dataset.action, ...payload });
+							hideCtxMenu();
+						});
+					});
+				});
+			});
+		}
+
+		// --- Quick bar ---
+		document.getElementById('filter-rig').addEventListener('change', (e) => {
+			const val = e.target.value;
+			document.getElementById('filter-role').value = '';
+			vscode.postMessage({
+				command: 'setFilter',
+				filterType: val ? 'rig' : undefined,
+				filterValue: val || undefined,
+			});
+		});
+		document.getElementById('filter-role').addEventListener('change', (e) => {
+			const val = e.target.value;
+			document.getElementById('filter-rig').value = '';
+			vscode.postMessage({
+				command: 'setFilter',
+				filterType: val ? 'role' : undefined,
+				filterValue: val || undefined,
+			});
+		});
+		document.getElementById('btn-clear-completed').addEventListener('click', () => {
+			vscode.postMessage({ command: 'clearCompleted' });
+		});
+
+		// --- Context menu dismiss ---
+		const ctxMenu = document.getElementById('context-menu');
+		function hideCtxMenu() {
+			ctxMenu.classList.remove('visible');
+		}
+		document.addEventListener('click', hideCtxMenu);
+		document.addEventListener('keydown', (e) => { if (e.key === 'Escape') hideCtxMenu(); });
+
+		// --- Handle updates from extension ---
+		let currentPaneNames = new Set();
+
+		window.addEventListener('message', (event) => {
+			const msg = event.data;
+			if (msg.command !== 'updatePanes') return;
+
+			const { panes, paneCount, hasFilter, rigs, roles, hasCompleted, activeFilter } = msg;
+
+			// Update filter dropdowns
+			const rigSelect = document.getElementById('filter-rig');
+			const roleSelect = document.getElementById('filter-role');
+			if (rigs) {
+				const rigVal = rigSelect.value;
+				rigSelect.innerHTML = '<option value="">All rigs</option>'
+					+ (rigs || []).map(r => '<option value="' + escapeHtml(r) + '"'
+						+ (activeFilter && activeFilter.type === 'rig' && activeFilter.value === r ? ' selected' : '')
+						+ '>' + escapeHtml(r) + '</option>').join('');
+				if (!activeFilter) rigSelect.value = rigVal || '';
+			}
+			if (roles) {
+				const roleVal = roleSelect.value;
+				roleSelect.innerHTML = '<option value="">All roles</option>'
+					+ (roles || []).map(r => '<option value="' + escapeHtml(r) + '"'
+						+ (activeFilter && activeFilter.type === 'role' && activeFilter.value === r ? ' selected' : '')
+						+ '>' + escapeHtml(r) + '</option>').join('');
+				if (!activeFilter) roleSelect.value = roleVal || '';
+			}
+			document.getElementById('btn-clear-completed').disabled = !hasCompleted;
+
+			// Update stats
+			document.getElementById('stats-label').textContent =
+				paneCount + ' terminal' + (paneCount !== 1 ? 's' : '') + (hasFilter ? ' (filtered)' : '');
+
+			const contentArea = document.getElementById('content-area');
+			const newPaneNames = new Set(panes.map(p => p.agentName));
+
+			// Check if pane set changed (add/remove) requiring full rebuild
+			const setChanged = newPaneNames.size !== currentPaneNames.size
+				|| [...newPaneNames].some(n => !currentPaneNames.has(n));
+
+			if (paneCount === 0) {
+				contentArea.innerHTML = '<div class="empty-state">'
+					+ '<div class="icon">&#x25A3;</div>'
+					+ '<p>' + (hasFilter
+						? 'No terminals match the current filter.'
+						: 'No agent terminals open.<br>Click an agent in the sidebar or sling a bead to populate the grid.')
+					+ '</p></div>';
+				currentPaneNames = newPaneNames;
+				return;
+			}
+
+			if (setChanged) {
+				// Full rebuild of the grid
+				const cols = computeCols(paneCount);
+				document.documentElement.style.setProperty('--grid-cols', cols);
+				contentArea.innerHTML = '<div class="grid">'
+					+ panes.map(p => buildPaneHtml(p)).join('')
+					+ '</div>';
+				currentPaneNames = newPaneNames;
+				bindPaneEvents();
+
+				// Auto-scroll all terminals to bottom on first render
+				document.querySelectorAll('.pane-terminal').forEach(el => {
+					el.scrollTop = el.scrollHeight;
+				});
+				return;
+			}
+
+			// Incremental update: update terminal content and status in-place
+			for (const p of panes) {
+				const paneEl = contentArea.querySelector('.pane[data-agent="' + CSS.escape(p.agentName) + '"]');
+				if (!paneEl) continue;
+
+				// Update status classes
+				paneEl.className = 'pane' + (p.focused ? ' focused' : '') + ' state-' + p.status;
+				paneEl.dataset.status = p.status;
+				paneEl.dataset.running = String(p.running);
+				paneEl.dataset.bead = p.beadId || '';
+
+				// Update status indicator
+				const statusDot = paneEl.querySelector('.pane-status');
+				if (statusDot) statusDot.className = 'pane-status ' + p.status;
+
+				// Update terminal output
+				const termEl = paneEl.querySelector('.pane-terminal');
+				const bodyEl = paneEl.querySelector('.pane-body');
+				if (p.terminalOutput) {
+					const cleanOutput = escapeHtml(stripAnsi(p.terminalOutput));
+					if (termEl) {
+						// Check if content actually changed
+						if (termEl.innerHTML !== cleanOutput) {
+							termEl.innerHTML = cleanOutput;
+							// Auto-scroll to bottom unless user manually scrolled up
+							if (!userScrolled[p.agentName]) {
+								termEl.scrollTop = termEl.scrollHeight;
+							}
+						}
+					} else {
+						// Replace empty state with terminal content
+						bodyEl.innerHTML = '<div class="pane-terminal" data-terminal="'
+							+ escapeHtml(p.agentName) + '">' + cleanOutput + '</div>';
+						const newTermEl = bodyEl.querySelector('.pane-terminal');
+						newTermEl.scrollTop = newTermEl.scrollHeight;
+						// Re-bind scroll tracking
+						newTermEl.addEventListener('scroll', () => {
+							const isAtBottom = newTermEl.scrollHeight - newTermEl.scrollTop - newTermEl.clientHeight < 20;
+							userScrolled[p.agentName] = !isAtBottom;
+						});
+						newTermEl.addEventListener('dblclick', () => {
+							vscode.postMessage({ command: 'focusPane', agentName: p.agentName });
+						});
+					}
+				} else if (!termEl && bodyEl) {
+					bodyEl.innerHTML = '<div class="pane-terminal-empty">'
+						+ '<span class="status-label ' + p.status + '">' + statusText(p.status) + '</span><br>'
+						+ 'Click to focus terminal'
+						+ '</div>';
+				}
+
+				// Update convoy progress
+				const existingConvoyLabel = paneEl.querySelector('.convoy-label');
+				const existingConvoyBar = paneEl.querySelector('.convoy-progress');
+				if (p.convoy) {
+					const pct = p.convoy.total > 0
+						? Math.round((p.convoy.completed / p.convoy.total) * 100)
+						: 0;
+					if (existingConvoyBar) {
+						existingConvoyBar.querySelector('.convoy-progress-bar').style.width = pct + '%';
+						existingConvoyLabel.querySelector('.progress-text').textContent =
+							p.convoy.completed + '/' + p.convoy.total;
+					}
+				}
+			}
+		});
 	</script>
 </body>
 </html>`;
-	}
-
-	private renderPaneCard(pane: BattlestationPaneInfo): string {
-		const focusedClass = pane.focused ? ' focused' : '';
-		const stateClass = ` state-${pane.status}`;
-		const statusLabel = this.statusDisplay(pane.status);
-		const beadBadge = pane.beadId
-			? `<div class="bead-badge" title="${this.escapeHtml(pane.beadId)}">${this.escapeHtml(pane.beadId)}</div>`
-			: '';
-		const convoyOverlay = pane.convoy
-			? this.renderConvoyProgress(pane.convoy)
-			: '';
-
-		return /* html */ `
-		<div class="pane${focusedClass}${stateClass}" data-agent="${this.escapeHtml(pane.agentName)}" data-role="${this.escapeHtml(pane.role)}" data-rig="${this.escapeHtml(pane.rig)}" data-bead="${this.escapeHtml(pane.beadId || '')}" data-running="${pane.running}" data-status="${pane.status}">
-			<div class="pane-header">
-				<div class="pane-header-left">
-					<div class="pane-slot">${pane.slot + 1}</div>
-					<div class="pane-status ${pane.status}"></div>
-					<div class="pane-name" title="${this.escapeHtml(pane.label)}">${this.escapeHtml(pane.label)}</div>
-					${beadBadge}
-				</div>
-				${pane.group ? `<div class="pane-group">${this.escapeHtml(pane.group)}</div>` : ''}
-				<div class="pane-actions">
-					<button class="btn-reveal" data-agent="${this.escapeHtml(pane.agentName)}" title="Reveal in sidebar">&#x1F50D;</button>
-					<button class="btn-reconnect" data-agent="${this.escapeHtml(pane.agentName)}" title="Reconnect">&#x21BB;</button>
-					<button class="btn-close" data-agent="${this.escapeHtml(pane.agentName)}" title="Close">&#x2715;</button>
-				</div>
-			</div>
-			<div class="pane-body">
-				<div class="terminal-hint">
-					<span class="status-label ${pane.status}">${statusLabel}</span><br>
-					Click to focus terminal
-				</div>
-			</div>${convoyOverlay}
-		</div>`;
-	}
-
-	private renderConvoyProgress(convoy: ConvoyProgressInfo): string {
-		const pct = convoy.total > 0
-			? Math.round((convoy.completed / convoy.total) * 100)
-			: 0;
-
-		return /* html */ `
-			<div class="convoy-label">
-				<span class="progress-text">${convoy.completed}/${convoy.total}</span>
-				${this.escapeHtml(convoy.convoyTitle)}
-			</div>
-			<div class="convoy-progress">
-				<div class="convoy-progress-bar" style="width: ${pct}%"></div>
-			</div>`;
-	}
-
-	private statusDisplay(status: AgentDisplayStatus): string {
-		switch (status) {
-			case 'running': return 'Running';
-			case 'completing': return 'Completing';
-			case 'stuck': return 'Stuck';
-			case 'dead': return 'Dead';
-			case 'exited': return 'Exited';
-			case 'idle': return 'Idle';
-			default: return status;
-		}
-	}
-
-	private escapeHtml(text: string): string {
-		return text
-			.replace(/&/g, '&amp;')
-			.replace(/</g, '&lt;')
-			.replace(/>/g, '&gt;')
-			.replace(/"/g, '&quot;');
 	}
 
 	private dispose(): void {
