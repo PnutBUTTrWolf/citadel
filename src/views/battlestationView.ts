@@ -335,6 +335,7 @@ export class BattlestationPanel {
 	.grid {
 		display: grid;
 		grid-template-columns: repeat(var(--grid-cols), 1fr);
+		grid-auto-rows: 1fr;
 		gap: 12px;
 		height: calc(100vh - 120px);
 	}
@@ -420,6 +421,7 @@ export class BattlestationPanel {
 	}
 	.pane-body {
 		flex: 1;
+		min-height: 0;
 		display: flex;
 		flex-direction: column;
 		overflow: hidden;
@@ -937,9 +939,12 @@ export class BattlestationPanel {
 					if (termEl) {
 						// Check if content actually changed
 						if (termEl.innerHTML !== cleanOutput) {
+							const savedScroll = termEl.scrollTop;
 							termEl.innerHTML = cleanOutput;
-							// Auto-scroll to bottom unless user manually scrolled up
-							if (!userScrolled[p.agentName]) {
+							if (userScrolled[p.agentName]) {
+								// Restore scroll position when user has scrolled up
+								termEl.scrollTop = savedScroll;
+							} else {
 								termEl.scrollTop = termEl.scrollHeight;
 							}
 						}
