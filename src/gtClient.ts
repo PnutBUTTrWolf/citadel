@@ -927,6 +927,16 @@ export class GtClient {
 
 		this.tmuxSetGlobalEnv(cp, 'PATH', enrichedPath);
 
+		// Enable mouse mode so scroll works in VS Code terminals attached to tmux
+		try {
+			cp.execFileSync('tmux', ['set', '-g', 'mouse', 'on'], {
+				timeout: 5_000,
+				stdio: 'ignore',
+			});
+		} catch {
+			// tmux server may not be running yet
+		}
+
 		// Set Claude provider env vars (Vertex, Bedrock, Anthropic).
 		for (const [k, v] of entries) {
 			this.tmuxSetGlobalEnv(cp, k, v);
