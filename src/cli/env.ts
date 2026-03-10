@@ -10,6 +10,8 @@ import * as path from 'path';
 const ADDITIONAL_BIN_DIRS = [
 	path.join(os.homedir(), '.local', 'bin'),
 	path.join(os.homedir(), 'go', 'bin'),
+	'/opt/homebrew/bin',
+	'/usr/local/bin',
 ];
 
 /**
