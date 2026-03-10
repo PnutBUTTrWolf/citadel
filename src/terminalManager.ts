@@ -507,7 +507,10 @@ export class TerminalManager {
 		const currentAgentNames = new Set<string>();
 
 		for (const agent of agents) {
-			if (INFRASTRUCTURE_ROLES.has(agent.role)) {
+			// Skip infrastructure roles unless they already have a tracked terminal.
+			// Without this, the mayor (and other infra agents) never get status
+			// updates after initial terminal open, causing stale "stopped" display.
+			if (INFRASTRUCTURE_ROLES.has(agent.role) && !this.terminalStates.has(agent.name)) {
 				continue;
 			}
 
